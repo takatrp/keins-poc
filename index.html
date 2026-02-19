@@ -3,17 +3,18 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>㈲ケインズリカー｜売上一覧PDF → CSV変換ツール（座標解析・税率別対応）</title>
+  <title>㈲ケインズリカー｜売上一覧PDF → CSV変換ツール（集計行除外・税率別対応）</title>
 
-  <!-- pdf.js -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
 
   <style>
     body { font-family: "Helvetica Neue", Arial, sans-serif; background:#f4f6f8; color:#333; padding:20px; }
     .container { max-width: 1100px; margin:0 auto; background:#fff; padding:24px; border-radius:10px; box-shadow:0 6px 18px rgba(0,0,0,0.08); }
     h1 { color:#1565c0; font-size:1.35rem; text-align:center; border-bottom:2px solid #e3f2fd; padding-bottom:12px; margin:0 0 18px; }
+
     .upload-area { border:2px dashed #90caf9; background:#f3e5f5; padding:22px; text-align:center; border-radius:10px; margin-bottom:14px; }
     .upload-area input[type="file"] { font-size:1rem; cursor:pointer; }
+
     .setting-area { display:flex; gap:14px; background:#fff8e1; padding:12px; border-radius:10px; border:1px solid #ffe0b2; align-items:center; flex-wrap:wrap; }
     .setting-area label { font-weight:700; font-size:0.9rem; }
     .setting-area input[type="date"] { padding:8px; border-radius:6px; border:1px solid #ccc; font-size:1rem; }
@@ -23,25 +24,17 @@
     th, td { border:1px solid #e0e0e0; padding:8px; text-align:center; font-size:0.9rem; }
     th { background:#f8f9fa; color:#444; }
     td { background:#fff; }
-    td input.money {
+
+    td input.money{
       width:92%; padding:6px; text-align:right;
       border:1px solid #cfd8dc; border-radius:6px;
       font-variant-numeric: tabular-nums;
       background:#ffffff;
     }
 
-    tfoot td {
-      background:#eef7ff;
-      font-weight:800;
-    }
-    .tfoot-label {
-      text-align:right;
-      color:#0d47a1;
-    }
-    .tfoot-num {
-      text-align:right;
-      font-variant-numeric: tabular-nums;
-    }
+    tfoot td { background:#eef7ff; font-weight:800; }
+    .tfoot-label { text-align:right; color:#0d47a1; }
+    .tfoot-num { text-align:right; font-variant-numeric: tabular-nums; }
 
     .btn { display:block; width:100%; padding:14px; border:none; border-radius:10px; font-size:1.08rem; font-weight:800; cursor:pointer; margin-top:14px; transition:0.15s; }
     .btn:hover { opacity:0.9; }
@@ -56,7 +49,7 @@
 </head>
 <body>
 <div class="container">
-  <h1>㈲ケインズリカー｜売上一覧PDF → 会計ソフト用CSV（座標解析で取引先・税率別（税込）を抽出）</h1>
+  <h1>㈲ケインズリカー｜売上一覧PDF → 会計ソフト用CSV（集計行を無視して税率別（税込）を抽出）</h1>
 
   <div class="upload-area">
     <p style="margin:0 0 10px; font-weight:800; color:#1565c0;">1) PDFファイルを選択</p>
@@ -66,7 +59,7 @@
         <input type="checkbox" id="dbgToggle"/>
         <label for="dbgToggle">デバッグログを表示</label>
       </div>
-      <div class="hint">※（得意先）一覧のコードは除外し、取引先ブロック内の「10%/8%」行から税込を作ります。</div>
+      <div class="hint">※「＝業務店掛計＝」等の集計ブロックは自動で無視します。</div>
     </div>
     <p id="status"></p>
   </div>
@@ -75,7 +68,7 @@
     <div class="setting-area">
       <label>仕訳日付:</label>
       <input type="date" id="targetDate"/>
-      <span class="hint">※PDFの「期間（～）」から月末日を推定します（見つからない場合は当月末）。</span>
+      <span class="hint">※PDFの期間（～）から月末日を推定（見つからない場合は当月末）。</span>
     </div>
 
     <table id="dataTable">
@@ -135,6 +128,12 @@
 
   function logDbg(msg) { debugLog.push(msg); renderDebug(); }
   function renderDebug() { if (!dbgToggle.checked) return; debugEl.textContent = debugLog.join("\n"); }
+
+  // --- 重要：集計ブロック判定（＝…計＝ / ＝…合計＝） ---
+  function isAggregateLineText(text){
+    const s = String(text ?? "").replace(/\s+/g, "");
+    return /＝.*(計|合計)＝/.test(s);
+  }
 
   // ---- 金額表示（カンマ） ----
   function toComma(n) {
@@ -248,7 +247,9 @@
       if (s === "取" || s === "引" || s === "先" || s === "名") continue;
       parts.push(s);
     }
-    return parts.join(" ").trim();
+    const name = parts.join(" ").trim();
+    if (isAggregateLineText(name)) return ""; // 保険：集計ラベルは取引先名にしない
+    return name;
   }
 
   function extractColumnNumber(line, colX, range = 90) {
@@ -273,22 +274,20 @@
     return null;
   }
 
-  function extractTaxTotalsFromRateLine(line, baseX, taxX) {
-    let base = null;
-    let tax = null;
+  // ★ 修正：税率行は「行内の最後の2つの金額」を 税抜合計・消費税合計 とみなす（列ズレ耐性）
+  function extractTaxTotalsFromRateLine(line) {
+    const nums = line.items
+      .map(it => ({ x: it.x, s: (it.str || "").trim() }))
+      .filter(o => isAmountToken(o.s))
+      .sort((a,b) => a.x - b.x)
+      .map(o => parseNum(o.s));
 
-    for (const it of line.items) {
-      const s = (it.str || "").trim();
-      if (!isAmountToken(s)) continue;
-
-      if (it.x >= (baseX - 10) && it.x < (taxX - 10)) {
-        base = parseNum(s);
-      } else if (it.x >= (taxX - 10)) {
-        tax = parseNum(s);
-      }
+    if (nums.length >= 2) {
+      const base = nums[nums.length - 2];
+      const tax  = nums[nums.length - 1];
+      return { base, tax, ok: true };
     }
-    if (base == null || tax == null) return { base: 0, tax: 0, ok: false };
-    return { base, tax, ok: true };
+    return { base: 0, tax: 0, ok: false };
   }
 
   function guessMonthEndFromText(allText) {
@@ -337,13 +336,11 @@
 
         el.addEventListener("input", () => {
           el.value = el.value.replace(/[^\d,\-()]/g, "");
-          // 入力中も合計を追随（重くなる場合はコメントアウト）
           recomputeSums();
         });
       });
     });
 
-    // 初回合計
     recomputeSums();
   }
 
@@ -372,12 +369,7 @@
         if (p === 1) firstPageAllText = lines.map(l => l.text).join("\n");
 
         const payX  = findAnchorX(lines, "入金/支払");
-        let baseX = findAnchorX(lines, "税抜合計");
-        let taxX  = findAnchorX(lines, "消費税合計");
-        if (baseX == null) baseX = 480;
-        if (taxX  == null) taxX  = 530;
-
-        logDbg(`--- page ${p}/${pdf.numPages} --- payX=${payX?.toFixed?.(1) ?? "null"} baseX=${baseX.toFixed(1)} taxX=${taxX.toFixed(1)}`);
+        logDbg(`--- page ${p}/${pdf.numPages} --- payX=${payX?.toFixed?.(1) ?? "null"}`);
 
         let inFootList = false;
 
@@ -387,13 +379,14 @@
           if (ln.text.includes("（得意先）")) inFootList = true;
           if (inFootList && ln.text.includes("取引先：[")) inFootList = false;
 
-          const codeItem = ln.items.find(it => CODE_RE.test(it.str) && it.x < 120);
+          const codeItem = ln.items.find(it => CODE_RE.test(it.str) && it.x < 160);
           if (!codeItem) continue;
           if (inFootList) continue;
           if (ln.text.includes("取引先：[")) continue;
 
           const code = codeItem.str;
 
+          // 取引先名の推測（コード行の直前付近）
           let nameLine = null;
           let summaryLine = null;
 
@@ -402,6 +395,7 @@
             if (k < 0) break;
             const cand = lines[k];
 
+            if (isAggregateLineText(cand.text)) continue; // ★重要：集計行は参照しない
             if (cand.text.includes("非課税対象額") || cand.text.includes("外税対象額")) continue;
 
             const name = extractNameFromLine(cand);
@@ -417,20 +411,29 @@
           if (rec.name === "不明な取引先" && name !== "不明な取引先") rec.name = name;
           rec.payment += payment;
 
+          // ★重要：この取引先の税率行を拾う（集計行に当たったら打ち切り）
           for (let j = i + 1; j < lines.length; j++) {
             const ln2 = lines[j];
+
             if (ln2.text.includes("（得意先）")) break;
 
-            const nextCode = ln2.items.find(it => CODE_RE.test(it.str) && it.x < 120);
+            // 集計ブロックに入ったら終了（＝業務店掛計＝ 等）
+            if (isAggregateLineText(ln2.text)) {
+              logDbg(`STOP（集計検出）: code=${code} name=${rec.name} line="${ln2.text}"`);
+              break;
+            }
+
+            // 次の取引先コードが来たら終了
+            const nextCode = ln2.items.find(it => CODE_RE.test(it.str) && it.x < 160);
             if (nextCode) break;
 
             const rate = detectRate(ln2.text);
             if (!rate) continue;
 
-            const totals = extractTaxTotalsFromRateLine(ln2, baseX, taxX);
+            const totals = extractTaxTotalsFromRateLine(ln2);
             if (!totals.ok) continue;
 
-            const gross = (totals.base + totals.tax);
+            const gross = totals.base + totals.tax;
             if (rate === 10) rec.sales10 += gross;
             if (rate === 8)  rec.sales8  += gross;
           }
@@ -440,9 +443,7 @@
       const lastDay = guessMonthEndFromText(firstPageAllText);
       dateInput.value = fmtDate(lastDay);
 
-      extractedData = Array.from(customers.values())
-        .sort((a, b) => a.code.localeCompare(b.code));
-
+      extractedData = Array.from(customers.values()).sort((a, b) => a.code.localeCompare(b.code));
       lastRawCustomers = extractedData;
 
       logDbg(`\n抽出完了: 取引先=${extractedData.length}件`);
