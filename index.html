@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>売上一覧PDF → CSV変換ツール（座標解析・税率別対応）</title>
+  <title>㈲ケインズリカー｜売上一覧PDF → CSV変換ツール（座標解析・税率別対応）</title>
 
   <!-- pdf.js -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
@@ -22,7 +22,26 @@
     table { width:100%; border-collapse:collapse; margin-top:12px; }
     th, td { border:1px solid #e0e0e0; padding:8px; text-align:center; font-size:0.9rem; }
     th { background:#f8f9fa; color:#444; }
-    td input { width:92%; padding:6px; text-align:right; border:1px solid #cfd8dc; border-radius:6px; }
+    td { background:#fff; }
+    td input.money {
+      width:92%; padding:6px; text-align:right;
+      border:1px solid #cfd8dc; border-radius:6px;
+      font-variant-numeric: tabular-nums;
+      background:#ffffff;
+    }
+
+    tfoot td {
+      background:#eef7ff;
+      font-weight:800;
+    }
+    .tfoot-label {
+      text-align:right;
+      color:#0d47a1;
+    }
+    .tfoot-num {
+      text-align:right;
+      font-variant-numeric: tabular-nums;
+    }
 
     .btn { display:block; width:100%; padding:14px; border:none; border-radius:10px; font-size:1.08rem; font-weight:800; cursor:pointer; margin-top:14px; transition:0.15s; }
     .btn:hover { opacity:0.9; }
@@ -37,7 +56,7 @@
 </head>
 <body>
 <div class="container">
-  <h1>売上一覧PDF → 会計ソフト用CSV（座標解析で取引先・税率別（税込）を抽出）</h1>
+  <h1>㈲ケインズリカー｜売上一覧PDF → 会計ソフト用CSV（座標解析で取引先・税率別（税込）を抽出）</h1>
 
   <div class="upload-area">
     <p style="margin:0 0 10px; font-weight:800; color:#1565c0;">1) PDFファイルを選択</p>
@@ -70,6 +89,14 @@
         </tr>
       </thead>
       <tbody></tbody>
+      <tfoot>
+        <tr>
+          <td class="tfoot-label" colspan="2">合計</td>
+          <td class="tfoot-num" id="sum10">0</td>
+          <td class="tfoot-num" id="sum8">0</td>
+          <td class="tfoot-num" id="sumPay">0</td>
+        </tr>
+      </tfoot>
     </table>
 
     <button type="button" class="btn btn-csv" onclick="downloadCSV()">会計ソフト用 CSVをダウンロード</button>
@@ -91,6 +118,10 @@
   const dbgToggle = document.getElementById("dbgToggle");
   const debugEl = document.getElementById("debug");
 
+  const sum10El = document.getElementById("sum10");
+  const sum8El  = document.getElementById("sum8");
+  const sumPayEl= document.getElementById("sumPay");
+
   const CODE_RE = /^\d{8}-\d{3}$/;
 
   let extractedData = [];
@@ -102,40 +133,51 @@
     renderDebug();
   });
 
-  function logDbg(msg) {
-    debugLog.push(msg);
-    renderDebug();
+  function logDbg(msg) { debugLog.push(msg); renderDebug(); }
+  function renderDebug() { if (!dbgToggle.checked) return; debugEl.textContent = debugLog.join("\n"); }
+
+  // ---- 金額表示（カンマ） ----
+  function toComma(n) {
+    const num = Number(n);
+    if (!Number.isFinite(num)) return "0";
+    return Math.trunc(num).toLocaleString("ja-JP");
   }
-  function renderDebug() {
-    if (!dbgToggle.checked) return;
-    debugEl.textContent = debugLog.join("\n");
+  function stripComma(s) {
+    return String(s ?? "").replace(/,/g, "").trim();
+  }
+  function parseIntSafe(s) {
+    const t = stripComma(s);
+    if (!t) return 0;
+    const n = parseInt(t, 10);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  // ---- 合計再計算 ----
+  function recomputeSums() {
+    let s10 = 0, s8 = 0, sp = 0;
+    for (let i = 0; i < extractedData.length; i++) {
+      s10 += parseIntSafe(document.getElementById(`s10_${i}`).value);
+      s8  += parseIntSafe(document.getElementById(`s8_${i}`).value);
+      sp  += parseIntSafe(document.getElementById(`pay_${i}`).value);
+    }
+    sum10El.textContent = toComma(s10);
+    sum8El.textContent  = toComma(s8);
+    sumPayEl.textContent= toComma(sp);
   }
 
   function isAmountToken(s) {
     const t = (s || "").trim();
-    // 整数（カンマあり/なし）、マイナス、括弧マイナスを許可
     return /^-?\(?\d{1,3}(,\d{3})*\)?$/.test(t) || /^-?\(?\d+\)?$/.test(t);
   }
-
-  function isDecimalToken(s){
-    const t=(s||"").trim();
-    return /^\d+\.\d+$/.test(t);
-  }
+  function isDecimalToken(s){ const t=(s||"").trim(); return /^\d+\.\d+$/.test(t); }
 
   function parseNum(s) {
     let t = (s || "").trim();
     if (!t) return 0;
-
     let neg = false;
-    if (t.startsWith("(") && t.endsWith(")")) {
-      neg = true;
-      t = t.slice(1, -1);
-    }
+    if (t.startsWith("(") && t.endsWith(")")) { neg = true; t = t.slice(1, -1); }
     t = t.replace(/,/g, "");
-    if (t.startsWith("-")) {
-      neg = true;
-      t = t.slice(1);
-    }
+    if (t.startsWith("-")) { neg = true; t = t.slice(1); }
     const n = parseInt(t, 10);
     if (Number.isNaN(n)) return 0;
     return neg ? -n : n;
@@ -151,7 +193,6 @@
     const viewport = page.getViewport({ scale: 1.0 });
     const tc = await page.getTextContent();
 
-    // item座標をviewport座標に変換（yは上→下に増える座標系）
     const items = tc.items
       .map(it => {
         const str = (it.str || "").trim();
@@ -163,9 +204,8 @@
       })
       .filter(Boolean);
 
-    // yで行グルーピング（近いyを同一行として束ねる）
     const buckets = new Map();
-    const tol = 2; // 行の許容誤差（pt）
+    const tol = 2;
 
     for (const it of items) {
       const yKey = Math.round(it.y / tol) * tol;
@@ -197,7 +237,7 @@
     if (!line) return "";
     const parts = [];
     for (const it of line.items) {
-      if (it.x > 260) continue; // 左側（取引先名領域）だけを見る
+      if (it.x > 260) continue;
       const s = (it.str || "").trim();
       if (!s) continue;
       if (isAmountToken(s) || isDecimalToken(s)) continue;
@@ -205,12 +245,7 @@
       if (s.includes("本支店コード")) continue;
       if (s.includes("（現金未収額）")) continue;
       if (s.includes("当残高")) continue;
-      if (s.includes("取") || s.includes("引") || s.includes("先") || s.includes("名")) {
-        // 見出し語が混ざる場合があるので、単体見出しは除外
-        // （ただし実名に含まれるケースは極小なので割り切り）
-        // 連続して出るときは落とす
-        if (s === "取" || s === "引" || s === "先" || s === "名") continue;
-      }
+      if (s === "取" || s === "引" || s === "先" || s === "名") continue;
       parts.push(s);
     }
     return parts.join(" ").trim();
@@ -246,7 +281,6 @@
       const s = (it.str || "").trim();
       if (!isAmountToken(s)) continue;
 
-      // 右端の「税抜合計」「消費税合計」列位置に寄せて拾う
       if (it.x >= (baseX - 10) && it.x < (taxX - 10)) {
         base = parseNum(s);
       } else if (it.x >= (taxX - 10)) {
@@ -258,20 +292,16 @@
   }
 
   function guessMonthEndFromText(allText) {
-    // 例: "2025年12月1日 ... ～ 2025年12月31日 ..."
     const re = /(\d{4})年(\d{1,2})月(\d{1,2})日[\s\S]*?～[\s\S]*?(\d{4})年(\d{1,2})月(\d{1,2})日/;
     const m = (allText || "").match(re);
     if (m) {
       const endY = parseInt(m[4], 10);
       const endM = parseInt(m[5], 10);
-      const last = new Date(endY, endM, 0); // 月は1-basedでOK（0日指定で月末）
-      return last;
+      return new Date(endY, endM, 0);
     }
-    // fallback: 当月末
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth() + 1, 0);
   }
-
   function fmtDate(d) {
     const y = d.getFullYear();
     const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -286,12 +316,35 @@
       tr.innerHTML = `
         <td style="text-align:left;">${csvEscape(row.name)}</td>
         <td>${csvEscape(row.code)}</td>
-        <td><input type="number" id="s10_${idx}" value="${row.sales10 || 0}"></td>
-        <td><input type="number" id="s8_${idx}" value="${row.sales8 || 0}"></td>
-        <td><input type="number" id="pay_${idx}" value="${row.payment || 0}"></td>
+        <td><input class="money" type="text" inputmode="numeric" id="s10_${idx}" value="${toComma(row.sales10 || 0)}"></td>
+        <td><input class="money" type="text" inputmode="numeric" id="s8_${idx}" value="${toComma(row.sales8 || 0)}"></td>
+        <td><input class="money" type="text" inputmode="numeric" id="pay_${idx}" value="${toComma(row.payment || 0)}"></td>
       `;
       tbody.appendChild(tr);
+
+      ["s10_", "s8_", "pay_"].forEach(prefix => {
+        const el = document.getElementById(`${prefix}${idx}`);
+
+        el.addEventListener("focus", () => {
+          el.value = stripComma(el.value);
+          el.select?.();
+        });
+
+        el.addEventListener("blur", () => {
+          el.value = toComma(parseIntSafe(el.value));
+          recomputeSums();
+        });
+
+        el.addEventListener("input", () => {
+          el.value = el.value.replace(/[^\d,\-()]/g, "");
+          // 入力中も合計を追随（重くなる場合はコメントアウト）
+          recomputeSums();
+        });
+      });
     });
+
+    // 初回合計
+    recomputeSums();
   }
 
   pdfInput.addEventListener("change", async (e) => {
@@ -310,18 +363,14 @@
       const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
 
       const customers = new Map();
-
       let firstPageAllText = "";
 
       for (let p = 1; p <= pdf.numPages; p++) {
         const page = await pdf.getPage(p);
         const lines = await getPageLines(page);
 
-        if (p === 1) {
-          firstPageAllText = lines.map(l => l.text).join("\n");
-        }
+        if (p === 1) firstPageAllText = lines.map(l => l.text).join("\n");
 
-        // ページ内アンカー推定（列位置）
         const payX  = findAnchorX(lines, "入金/支払");
         let baseX = findAnchorX(lines, "税抜合計");
         let taxX  = findAnchorX(lines, "消費税合計");
@@ -338,15 +387,13 @@
           if (ln.text.includes("（得意先）")) inFootList = true;
           if (inFootList && ln.text.includes("取引先：[")) inFootList = false;
 
-          // 左端のコード（取引先ブロック開始）を検出
           const codeItem = ln.items.find(it => CODE_RE.test(it.str) && it.x < 120);
           if (!codeItem) continue;
-          if (inFootList) continue;               // 得意先一覧コードは除外
+          if (inFootList) continue;
           if (ln.text.includes("取引先：[")) continue;
 
           const code = codeItem.str;
 
-          // 直前数行から「名前行」「数値行」を探索（0取引などでズレるケース対策）
           let nameLine = null;
           let summaryLine = null;
 
@@ -358,26 +405,18 @@
             if (cand.text.includes("非課税対象額") || cand.text.includes("外税対象額")) continue;
 
             const name = extractNameFromLine(cand);
-            if (name) {
-              nameLine = cand;
-              break;
-            }
-            // 数値だけの行をsummary候補として保持
+            if (name) { nameLine = cand; break; }
             if (!summaryLine && /\d/.test(cand.text)) summaryLine = cand;
           }
 
           const name = extractNameFromLine(nameLine) || "不明な取引先";
           const payment = extractColumnNumber(summaryLine || nameLine, payX);
 
-          // レコード作成 or 追記（同一取引先が複数ページに跨る可能性を考慮）
-          if (!customers.has(code)) {
-            customers.set(code, { code, name, sales10: 0, sales8: 0, payment: 0 });
-          }
+          if (!customers.has(code)) customers.set(code, { code, name, sales10: 0, sales8: 0, payment: 0 });
           const rec = customers.get(code);
           if (rec.name === "不明な取引先" && name !== "不明な取引先") rec.name = name;
           rec.payment += payment;
 
-          // このコード行の後ろを走査して 10%/8% の税込合計を拾う（次のコードまで）
           for (let j = i + 1; j < lines.length; j++) {
             const ln2 = lines[j];
             if (ln2.text.includes("（得意先）")) break;
@@ -398,11 +437,9 @@
         }
       }
 
-      // 日付（期間の～から月末推定）
       const lastDay = guessMonthEndFromText(firstPageAllText);
       dateInput.value = fmtDate(lastDay);
 
-      // Map → 配列
       extractedData = Array.from(customers.values())
         .sort((a, b) => a.code.localeCompare(b.code));
 
@@ -439,25 +476,22 @@
     const rows = [header.map(csvEscape).join(",")];
 
     extractedData.forEach((row, idx) => {
-      const s10 = parseInt(document.getElementById(`s10_${idx}`).value, 10) || 0;
-      const s8  = parseInt(document.getElementById(`s8_${idx}`).value, 10)  || 0;
-      const pay = parseInt(document.getElementById(`pay_${idx}`).value, 10) || 0;
+      const s10 = parseIntSafe(document.getElementById(`s10_${idx}`).value);
+      const s8  = parseIntSafe(document.getElementById(`s8_${idx}`).value);
+      const pay = parseIntSafe(document.getElementById(`pay_${idx}`).value);
 
-      // 売上（10%）
       if (s10 > 0) {
         rows.push([
           "売上","1","10","","1122","売掛金","","","4111","売上高","","",
           row.code,row.name,"売上計上(10%)", String(s10), dateStr
         ].map(csvEscape).join(","));
       }
-      // 売上（8%）
       if (s8 > 0) {
         rows.push([
           "売上","1","8","","1122","売掛金","","","4111","売上高","","",
           row.code,row.name,"売上計上(8%)", String(s8), dateStr
         ].map(csvEscape).join(","));
       }
-      // 入金
       if (pay > 0) {
         rows.push([
           "入金","0","0","","1113","普通預金","","","1122","売掛金","","",
@@ -466,10 +500,7 @@
       }
     });
 
-    if (rows.length === 1) {
-      alert("出力するデータがありません（全て0のため）。");
-      return;
-    }
+    if (rows.length === 1) { alert("出力するデータがありません（全て0のため）。"); return; }
 
     const csvString = "\uFEFF" + rows.join("\r\n");
     const blob = new Blob([csvString], { type: "text/csv;charset=utf-8;" });
