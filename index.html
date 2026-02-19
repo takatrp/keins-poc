@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>売上一覧PDF → CSV変換ツール (PoC版)</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+  <style>
+    body { font-family: "Helvetica Neue", Arial, sans-serif; background-color: #f4f6f8; color: #333; padding: 20px; }
+    .container { max-width: 1000px; margin: 0 auto; background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+    h1 { color: #1565c0; font-size: 1.5rem; text-align: center; border-bottom: 2px solid #e3f2fd; padding-bottom: 15px; }
+    
+    .upload-area { border: 2px dashed #90caf9; background-color: #f3e5f5; padding: 30px; text-align: center; border-radius: 8px; margin-bottom: 20px; }
+    .upload-area input[type="file"] { font-size: 1.1rem; cursor: pointer; }
+    
+    .setting-area { display: flex; gap: 20px; background: #fff8e1; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #ffe0b2; align-items: center;}
+    .setting-area label { font-weight: bold; font-size: 0.9rem; }
+    .setting-area input[type="date"] { padding: 8px; border-radius: 4px; border: 1px solid #ccc; font-size: 1rem; }
+
+    table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+    th, td { border: 1px solid #ddd; padding: 10px; text-align: center; font-size: 0.9rem; }
+    th { background-color: #f8f9fa; color: #444; }
+    td input { width: 90%; padding: 5px; text-align: right; border: 1px solid #ccc; border-radius: 4px; }
+    
+    .btn-csv { display: block; width: 100%; padding: 15px; background-color: #2e7d32; color: white; border: none; border-radius: 6px; font-size: 1.2rem; font-weight: bold; cursor: pointer; margin-top: 20px; transition: 0.2s; }
+    .btn-csv:hover { opacity: 0.8; }
+    .btn-csv:disabled { background-color: #9e9e9e; cursor: not-allowed; }
+
+    #status { text-align: center; font-weight: bold; color: #d32f2f; margin-top: 10px; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h1>売上一覧PDF → CSV自動変換ツール (PoC版)</h1>
+
+  <div class="upload-area">
+    <p style="margin-top: 0; font-weight: bold; color: #1565c0;">1. 売上一覧のPDFファイルを選択してください</p>
+    <input type="file" id="pdfInput" accept="application/pdf">
+    <p id="status"></p>
+  </div>
+
+  <div id="resultsArea" style="display: none;">
+    <div class="setting-area">
+      <label>抽出された年月（仕訳日付）:</label>
+      <input type="date" id="targetDate">
+      <span style="font-size:0.8rem; color:#666;">※自動計算された月末日です。必要に応じて修正してください。</span>
+    </div>
+
+    <p style="font-size:0.9rem; color:#d32f2f; font-weight:bold;">2. 抽出結果の確認（数値がずれている場合は手入力で修正可能です）</p>
+    <table id="dataTable">
+      <thead>
+        <tr>
+          <th style="width:25%">取引先名</th>
+          <th style="width:15%">コード</th>
+          <th style="width:20%">10%売上 (税込)</th>
+          <th style="width:20%">8%売上 (税込)</th>
+          <th style="width:20%">入金額</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+
+    <button type="button" id="downloadBtn" class="btn-csv" onclick="downloadCSV()">会計ソフト用 CSVをダウンロード</button>
+  </div>
+</div>
+
+<script>
+  // PDF.jsのWorker設定
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+
+  const pdfInput = document.getElementById('pdfInput');
+  const statusEl = document.getElementById('status');
+  const resultsArea = document.getElementById('resultsArea');
+  const tbody = document.querySelector('#dataTable tbody');
+  const dateInput = document.getElementById('targetDate');
+
+  let extractedData = [];
+
+  // ファイル選択時の処理
+  pdfInput.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    statusEl.textContent = "PDFを解析中... 少々お待ちください。";
+    resultsArea.style.display = "none";
+    extractedData = [];
+    tbody.innerHTML = "";
+
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
+      let allTextTokens = [];
+
+      // 全ページのテキストを取得
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        textContent.items.forEach(item => {
+          const text = item.str.trim();
+          if (text) allTextTokens.push(text);
+        });
+      }
+
+      parseTokens(allTextTokens);
+
+    } catch (err) {
+      console.error(err);
+      statusEl.textContent = "エラーが発生しました。PDFが正しくないか、テキストが抽出できない形式です。";
+    }
+  });
+
+  // テキスト配列からデータをパースするロジック
+  function parseTokens(tokens) {
+    let year = new Date().getFullYear();
+    let month = new Date().getMonth() + 1;
+    let currentCustomer = null;
+
+    for (let i = 0; i < tokens.length; i++) {
+      let t = tokens[i];
+
+      // 1. 年月の抽出
+      let ymMatch = t.match(/(\d{4})年(\d{1,2})月/);
+      if (ymMatch) {
+        year = parseInt(ymMatch[1]);
+        month = parseInt(ymMatch[2]);
+      }
+
+      // 2. 取引先の抽出 (コード「00000000-000」をトリガーにする)
+      if (t.match(/^\d{8}-\d{3}$/)) {
+        let code = t;
+        let name = "不明な取引先";
+        
+        // コードの少し前にある文字列を名前にする（数字や記号だけじゃないもの）
+        for (let j = i - 1; j >= Math.max(0, i - 5); j--) {
+          if (!tokens[j].match(/^[\d,\.\-%]+$/) && !tokens[j].includes("非課税")) {
+            name = tokens[j];
+            break;
+          }
+        }
+
+        // 入金額の推測 (取引先名とコードの間にある、カンマ付きの大きな数字の2番目と仮定)
+        let paymentAmt = 0;
+        let nums = [];
+        for (let j = i - 1; j >= Math.max(0, i - 10); j--) {
+           if (tokens[j] === name) break;
+           if (tokens[j].match(/^\d{1,3}(,\d{3})+$/)) {
+              nums.unshift(parseInt(tokens[j].replace(/,/g, ''), 10));
+           }
+        }
+        if (nums.length >= 2) paymentAmt = nums[1];
+
+        currentCustomer = { name: name, code: code, sales10: 0, sales8: 0, payment: paymentAmt };
+        extractedData.push(currentCustomer);
+      }
+
+      // 3. 10%売上の抽出
+      if (t.includes("10%")) {
+        let nums = getFollowingNumbers(tokens, i);
+        if (currentCustomer && nums.length > 0) currentCustomer.sales10 = nums[nums.length - 1]; // 連続する数字の最後が税込合計
+      }
+
+      // 4. 8%売上の抽出
+      if (t === "8%" || t.includes("8%")) {
+        let nums = getFollowingNumbers(tokens, i);
+        if (currentCustomer && nums.length > 0) currentCustomer.sales8 = nums[nums.length - 1];
+      }
+    }
+
+    // 月末日の計算とセット
+    const lastDay = new Date(year, month, 0);
+    const yStr = lastDay.getFullYear();
+    const mStr = String(lastDay.getMonth() + 1).padStart(2, '0');
+    const dStr = String(lastDay.getDate()).padStart(2, '0');
+    dateInput.value = `${yStr}-${mStr}-${dStr}`;
+
+    renderTable();
+    statusEl.textContent = "";
+    resultsArea.style.display = "block";
+  }
+
+  // 指定インデックス以降のカンマ付き数字を収集するヘルパー
+  function getFollowingNumbers(tokens, startIndex) {
+    let nums = [];
+    for (let j = startIndex + 1; j < startIndex + 15; j++) {
+      if (j >= tokens.length || tokens[j].match(/^\d{8}-\d{3}$/)) break; // 次の取引先に行ったら終了
+      let val = tokens[j];
+      if (val.match(/^-?\d{1,3}(,\d{3})*$/) || val === "0") {
+        nums.push(parseInt(val.replace(/,/g, ''), 10) || 0);
+      }
+    }
+    return nums;
+  }
+
+  // テーブルに描画
+  function renderTable() {
+    extractedData.forEach((row, index) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td style="text-align:left;">${row.name}</td>
+        <td>${row.code}</td>
+        <td><input type="number" id="s10_${index}" value="${row.sales10}"></td>
+        <td><input type="number" id="s8_${index}" value="${row.sales8}"></td>
+        <td><input type="number" id="pay_${index}" value="${row.payment}"></td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+
+  // CSVダウンロード処理 (暫定ルール適用)
+  function downloadCSV() {
+    const dateStr = dateInput.value;
+    if (!dateStr) { alert("日付を指定してください"); return; }
+
+    const header = [
+      "種類","課税区分","税率","P/L部門","借方コード","借方科目","補助コード","B/S部門管理",
+      "貸方コード","貸方科目","補助コード","B/S部門管理","取引先コード","取引先名","摘要","税込金額","日付"
+    ];
+    let csvRows = [header.join(",")];
+
+    extractedData.forEach((row, index) => {
+      // 画面上のinputの値を最新として取得
+      const s10 = parseInt(document.getElementById(`s10_${index}`).value) || 0;
+      const s8 = parseInt(document.getElementById(`s8_${index}`).value) || 0;
+      const pay = parseInt(document.getElementById(`pay_${index}`).value) || 0;
+
+      // 売上 (10%)
+      if (s10 > 0) {
+        csvRows.push([
+          "売上", "1", "10", "", "1122", "売掛金", "", "", "4111", "売上高", "", "", row.code, row.name, "売上計上(10%)", s10, dateStr
+        ].join(","));
+      }
+
+      // 売上 (8%)
+      if (s8 > 0) {
+        csvRows.push([
+          "売上", "1", "8", "", "1122", "売掛金", "", "", "4111", "売上高", "", "", row.code, row.name, "売上計上(8%)", s8, dateStr
+        ].join(","));
+      }
+
+      // 入金
+      if (pay > 0) {
+        csvRows.push([
+          "入金", "0", "0", "", "1113", "普通預金", "", "", "1122", "売掛金", "", "", row.code, row.name, "入金", pay, dateStr
+        ].join(","));
+      }
+    });
+
+    if (csvRows.length === 1) {
+      alert("出力するデータがありません。金額がすべて0になっています。");
+      return;
+    }
+
+    // ダウンロード実行 (BOM付きで文字化け防止)
+    const csvString = "\uFEFF" + csvRows.join("\r\n");
+    const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `売上仕訳データ_${dateStr}.csv`;
+    link.click();
+  }
+</script>
+
+</body>
+</html>
