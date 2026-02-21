@@ -3,63 +3,78 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>㈲ケインズリカー｜売上一覧PDF → CSV変換ツール（集計行除外・税率別対応）</title>
+  <title>㈲ケインズリカー｜売上一覧Excel → CSV変換（TKCコード対応）</title>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+  <!-- SheetJS (xlsx) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
   <style>
     body { font-family: "Helvetica Neue", Arial, sans-serif; background:#f4f6f8; color:#333; padding:20px; }
-    .container { max-width: 1100px; margin:0 auto; background:#fff; padding:24px; border-radius:10px; box-shadow:0 6px 18px rgba(0,0,0,0.08); }
+    .container { max-width: 1250px; margin:0 auto; background:#fff; padding:24px; border-radius:10px; box-shadow:0 6px 18px rgba(0,0,0,0.08); }
     h1 { color:#1565c0; font-size:1.35rem; text-align:center; border-bottom:2px solid #e3f2fd; padding-bottom:12px; margin:0 0 18px; }
 
     .upload-area { border:2px dashed #90caf9; background:#f3e5f5; padding:22px; text-align:center; border-radius:10px; margin-bottom:14px; }
     .upload-area input[type="file"] { font-size:1rem; cursor:pointer; }
 
-    .setting-area { display:flex; gap:14px; background:#fff8e1; padding:12px; border-radius:10px; border:1px solid #ffe0b2; align-items:center; flex-wrap:wrap; }
+    .setting-area { display:flex; gap:14px; background:#fff8e1; padding:12px; border-radius:10px; border:1px solid #ffe0b2; align-items:center; flex-wrap:wrap; margin-bottom:12px;}
     .setting-area label { font-weight:700; font-size:0.9rem; }
-    .setting-area input[type="date"] { padding:8px; border-radius:6px; border:1px solid #ccc; font-size:1rem; }
+    .setting-area input[type="date"], .setting-area input[type="text"] {
+      padding:8px; border-radius:6px; border:1px solid #ccc; font-size:0.95rem;
+    }
     .hint { font-size:0.82rem; color:#666; }
 
-    table { width:100%; border-collapse:collapse; margin-top:12px; }
+    table { width:100%; border-collapse:collapse; margin-top:10px; }
     th, td { border:1px solid #e0e0e0; padding:8px; text-align:center; font-size:0.9rem; }
     th { background:#f8f9fa; color:#444; }
     td { background:#fff; }
 
-    td input.money{
-      width:92%; padding:6px; text-align:right;
+    td input.money, td input.code {
+      width:92%; padding:6px;
       border:1px solid #cfd8dc; border-radius:6px;
       font-variant-numeric: tabular-nums;
       background:#ffffff;
+    }
+    td input.money { text-align:right; }
+    td input.code { text-align:center; }
+
+    .warn {
+      outline: 2px solid rgba(211,47,47,0.35);
+      background: rgba(255,235,238,0.7);
     }
 
     tfoot td { background:#eef7ff; font-weight:800; }
     .tfoot-label { text-align:right; color:#0d47a1; }
     .tfoot-num { text-align:right; font-variant-numeric: tabular-nums; }
 
-    .btn { display:block; width:100%; padding:14px; border:none; border-radius:10px; font-size:1.08rem; font-weight:800; cursor:pointer; margin-top:14px; transition:0.15s; }
+    .btn { display:block; width:100%; padding:14px; border:none; border-radius:10px; font-size:1.05rem; font-weight:800; cursor:pointer; margin-top:12px; transition:0.15s; }
     .btn:hover { opacity:0.9; }
     .btn-csv { background:#2e7d32; color:#fff; }
+    .btn-csv2 { background:#00695c; color:#fff; }
     .btn-json { background:#455a64; color:#fff; }
 
     #status { text-align:center; font-weight:700; color:#d32f2f; margin:10px 0 0; white-space:pre-wrap; }
     #debug { display:none; background:#0b1020; color:#e8eaf6; padding:12px; border-radius:10px; margin-top:12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; white-space:pre-wrap; }
     .row { display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
     .toggle { display:flex; gap:8px; align-items:center; font-size:0.9rem; user-select:none; }
+
+    .pill { display:inline-block; padding:3px 8px; border-radius:999px; background:#e3f2fd; color:#0d47a1; font-size:0.78rem; font-weight:700; }
+
+    .hidden { display:none !important; }
   </style>
 </head>
 <body>
 <div class="container">
-  <h1>㈲ケインズリカー｜売上一覧PDF → 会計ソフト用CSV（集計行を無視して税率別（税込）を抽出）</h1>
+  <h1>㈲ケインズリカー｜売上一覧Excel → 会計ソフト用CSV（TKCコード・売上のみモード対応）</h1>
 
   <div class="upload-area">
-    <p style="margin:0 0 10px; font-weight:800; color:#1565c0;">1) PDFファイルを選択</p>
-    <input type="file" id="pdfInput" accept="application/pdf"/>
+    <p style="margin:0 0 10px; font-weight:800; color:#1565c0;">1) Excel（.xlsx）ファイルを選択</p>
+    <input type="file" id="xlsxInput" accept=".xlsx,.xls" />
     <div class="row" style="margin-top:10px;">
       <div class="toggle">
         <input type="checkbox" id="dbgToggle"/>
         <label for="dbgToggle">デバッグログを表示</label>
       </div>
-      <div class="hint">※「＝業務店掛計＝」等の集計ブロックは自動で無視します。</div>
+      <div class="hint">※Sheet1（末尾スペース含む “Sheet1 ”）のマスターから「取引先コード→TKCコード」を引当します。</div>
     </div>
     <p id="status"></p>
   </div>
@@ -68,31 +83,52 @@
     <div class="setting-area">
       <label>仕訳日付:</label>
       <input type="date" id="targetDate"/>
-      <span class="hint">※PDFの期間（～）から月末日を推定（見つからない場合は当月末）。</span>
+      <span class="hint">※Excel内の「YYYY年M月」から月末日を推定（見つからない場合は当月末）。</span>
+      <span class="pill" id="countPill">0件</span>
+    </div>
+
+    <div class="setting-area">
+      <div class="toggle">
+        <input type="checkbox" id="includePayment" checked />
+        <label for="includePayment">入金行も出力する</label>
+      </div>
+
+      <div class="toggle">
+        <input type="checkbox" id="useTkcForCsv" checked />
+        <label for="useTkcForCsv">CSVの「取引先コード」にTKCコードを優先使用</label>
+      </div>
+
+      <label style="margin-left:6px;">入金列 見出し追加（任意）:</label>
+      <input type="text" id="payHeaderExtra" placeholder="例：入金／支払額" style="min-width:220px;" />
+      <button type="button" id="reparseBtn" style="padding:8px 10px; border-radius:8px; border:1px solid #ccc; background:#fff; cursor:pointer; font-weight:700;">再抽出</button>
+
+      <span class="hint">※入金が0ばかりの場合：ここに見出しを入力 →「再抽出」</span>
     </div>
 
     <table id="dataTable">
       <thead>
         <tr>
-          <th style="width:28%;">取引先名</th>
-          <th style="width:14%;">コード</th>
-          <th style="width:18%;">10% 売上（税込）</th>
-          <th style="width:18%;">8% 売上（税込）</th>
-          <th style="width:18%;">入金額</th>
+          <th style="width:26%;">取引先名</th>
+          <th style="width:12%;">元コード</th>
+          <th style="width:10%;">TKCコード</th>
+          <th style="width:16%;">10% 売上（税込）</th>
+          <th style="width:16%;">8% 売上（税込）</th>
+          <th style="width:16%;" class="thPay">入金額（任意）</th>
         </tr>
       </thead>
       <tbody></tbody>
       <tfoot>
         <tr>
-          <td class="tfoot-label" colspan="2">合計</td>
+          <td class="tfoot-label" colspan="3">合計</td>
           <td class="tfoot-num" id="sum10">0</td>
           <td class="tfoot-num" id="sum8">0</td>
-          <td class="tfoot-num" id="sumPay">0</td>
+          <td class="tfoot-num thPay" id="sumPay">0</td>
         </tr>
       </tfoot>
     </table>
 
-    <button type="button" class="btn btn-csv" onclick="downloadCSV()">会計ソフト用 CSVをダウンロード</button>
+    <button type="button" class="btn btn-csv" onclick="downloadCSV()">会計ソフト用 CSVをダウンロード（仕様固定）</button>
+    <button type="button" class="btn btn-csv2" onclick="downloadAuditCSV()">確認用CSVをダウンロード（元コード＋TKCコード＋税率別）</button>
     <button type="button" class="btn btn-json" onclick="downloadDebugJSON()">抽出データ(JSON)をダウンロード（検証用）</button>
 
     <div id="debug"></div>
@@ -100,16 +136,19 @@
 </div>
 
 <script>
-  pdfjsLib.GlobalWorkerOptions.workerSrc =
-    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js";
-
-  const pdfInput = document.getElementById("pdfInput");
+  const xlsxInput = document.getElementById("xlsxInput");
   const statusEl = document.getElementById("status");
   const resultsArea = document.getElementById("resultsArea");
   const tbody = document.querySelector("#dataTable tbody");
   const dateInput = document.getElementById("targetDate");
   const dbgToggle = document.getElementById("dbgToggle");
   const debugEl = document.getElementById("debug");
+  const countPill = document.getElementById("countPill");
+
+  const includePaymentEl = document.getElementById("includePayment");
+  const useTkcForCsvEl = document.getElementById("useTkcForCsv");
+  const payHeaderExtraEl = document.getElementById("payHeaderExtra");
+  const reparseBtn = document.getElementById("reparseBtn");
 
   const sum10El = document.getElementById("sum10");
   const sum8El  = document.getElementById("sum8");
@@ -120,58 +159,62 @@
   let extractedData = [];
   let debugLog = [];
   let lastRawCustomers = [];
+  let lastArrayBuffer = null;
+  let lastFileName = "";
+  let masterMaps = { codeToTkc: new Map(), nameToTkc: new Map(), masterSheet: null };
 
   dbgToggle.addEventListener("change", () => {
     debugEl.style.display = dbgToggle.checked ? "block" : "none";
     renderDebug();
   });
 
-  function logDbg(msg) { debugLog.push(msg); renderDebug(); }
-  function renderDebug() { if (!dbgToggle.checked) return; debugEl.textContent = debugLog.join("\n"); }
+  includePaymentEl.addEventListener("change", () => {
+    applyPaymentVisibility();
+    recomputeSums();
+  });
 
-  // --- 重要：集計ブロック判定（＝…計＝ / ＝…合計＝） ---
-  function isAggregateLineText(text){
+  reparseBtn.addEventListener("click", async () => {
+    if (!lastArrayBuffer) return;
+    statusEl.textContent = "再抽出中...";
+    extractedData = [];
+    debugLog = [];
+    renderDebug();
+    resultsArea.style.display = "none";
+    await parseWorkbook(lastArrayBuffer, lastFileName);
+  });
+
+  function logDbg(msg){ debugLog.push(msg); renderDebug(); }
+  function renderDebug(){ if (!dbgToggle.checked) return; debugEl.textContent = debugLog.join("\n"); }
+
+  // --- 集計ブロック判定（例：＝業務店掛計＝ / ＝合計＝） ---
+  function isAggregateText(text){
     const s = String(text ?? "").replace(/\s+/g, "");
     return /＝.*(計|合計)＝/.test(s);
   }
 
-  // ---- 金額表示（カンマ） ----
-  function toComma(n) {
+  // ---- 表示金額（カンマ） ----
+  function toComma(n){
     const num = Number(n);
     if (!Number.isFinite(num)) return "0";
     return Math.trunc(num).toLocaleString("ja-JP");
   }
-  function stripComma(s) {
-    return String(s ?? "").replace(/,/g, "").trim();
-  }
-  function parseIntSafe(s) {
+  function stripComma(s){ return String(s ?? "").replace(/,/g, "").trim(); }
+  function parseIntSafe(s){
     const t = stripComma(s);
     if (!t) return 0;
     const n = parseInt(t, 10);
     return Number.isFinite(n) ? n : 0;
   }
 
-  // ---- 合計再計算 ----
-  function recomputeSums() {
-    let s10 = 0, s8 = 0, sp = 0;
-    for (let i = 0; i < extractedData.length; i++) {
-      s10 += parseIntSafe(document.getElementById(`s10_${i}`).value);
-      s8  += parseIntSafe(document.getElementById(`s8_${i}`).value);
-      sp  += parseIntSafe(document.getElementById(`pay_${i}`).value);
-    }
-    sum10El.textContent = toComma(s10);
-    sum8El.textContent  = toComma(s8);
-    sumPayEl.textContent= toComma(sp);
+  function isAmountLike(v){
+    if (typeof v === "number" && Number.isFinite(v)) return true;
+    const s = String(v ?? "").trim();
+    // (1,234) / -1,234 / 1234
+    return /^-?\(?\d{1,3}(,\d{3})*\)?$/.test(s) || /^-?\(?\d+\)?$/.test(s);
   }
-
-  function isAmountToken(s) {
-    const t = (s || "").trim();
-    return /^-?\(?\d{1,3}(,\d{3})*\)?$/.test(t) || /^-?\(?\d+\)?$/.test(t);
-  }
-  function isDecimalToken(s){ const t=(s||"").trim(); return /^\d+\.\d+$/.test(t); }
-
-  function parseNum(s) {
-    let t = (s || "").trim();
+  function parseNum(v){
+    if (typeof v === "number" && Number.isFinite(v)) return Math.trunc(v);
+    let t = String(v ?? "").trim();
     if (!t) return 0;
     let neg = false;
     if (t.startsWith("(") && t.endsWith(")")) { neg = true; t = t.slice(1, -1); }
@@ -182,107 +225,58 @@
     return neg ? -n : n;
   }
 
-  function csvEscape(v) {
+  function csvEscape(v){
     const s = String(v ?? "");
     if (/[",\r\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
     return s;
   }
 
-  async function getPageLines(page) {
-    const viewport = page.getViewport({ scale: 1.0 });
-    const tc = await page.getTextContent();
-
-    const items = tc.items
-      .map(it => {
-        const str = (it.str || "").trim();
-        if (!str) return null;
-        const tx = pdfjsLib.Util.transform(viewport.transform, it.transform);
-        const x = tx[4];
-        const y = tx[5];
-        return { str, x, y };
-      })
-      .filter(Boolean);
-
-    const buckets = new Map();
-    const tol = 2;
-
-    for (const it of items) {
-      const yKey = Math.round(it.y / tol) * tol;
-      if (!buckets.has(yKey)) buckets.set(yKey, []);
-      buckets.get(yKey).push(it);
-    }
-
-    const lines = Array.from(buckets.entries())
-      .sort((a, b) => a[0] - b[0])
-      .map(([yKey, arr]) => {
-        arr.sort((a, b) => a.x - b.x);
-        const text = arr.map(a => a.str).join(" ");
-        return { y: yKey, items: arr, text };
-      });
-
-    return lines;
-  }
-
-  function findAnchorX(lines, needle) {
-    for (const ln of lines) {
-      for (const it of ln.items) {
-        if ((it.str || "").includes(needle)) return it.x;
+  // ---- 合計再計算 ----
+  function recomputeSums(){
+    let s10=0, s8=0, sp=0;
+    for (let i=0;i<extractedData.length;i++){
+      s10 += parseIntSafe(document.getElementById(`s10_${i}`).value);
+      s8  += parseIntSafe(document.getElementById(`s8_${i}`).value);
+      if (includePaymentEl.checked){
+        sp  += parseIntSafe(document.getElementById(`pay_${i}`).value);
       }
     }
-    return null;
+    sum10El.textContent = toComma(s10);
+    sum8El.textContent  = toComma(s8);
+    sumPayEl.textContent= toComma(sp);
   }
 
-  function extractNameFromLine(line) {
-    if (!line) return "";
-    const parts = [];
-    for (const it of line.items) {
-      if (it.x > 260) continue;
-      const s = (it.str || "").trim();
-      if (!s) continue;
-      if (isAmountToken(s) || isDecimalToken(s)) continue;
-      if (s === "%" || s === "率" || s === "消費税") continue;
-      if (s.includes("本支店コード")) continue;
-      if (s.includes("（現金未収額）")) continue;
-      if (s.includes("当残高")) continue;
-      if (s === "取" || s === "引" || s === "先" || s === "名") continue;
-      parts.push(s);
-    }
-    const name = parts.join(" ").trim();
-    if (isAggregateLineText(name)) return ""; // 保険：集計ラベルは取引先名にしない
-    return name;
+  function applyPaymentVisibility(){
+    const show = includePaymentEl.checked;
+    document.querySelectorAll(".thPay").forEach(el => {
+      el.classList.toggle("hidden", !show);
+    });
+    // tbodyの入力はrenderTable時に作るので、ここでは列自体の見た目だけ
   }
 
-  function extractColumnNumber(line, colX, range = 90) {
-    if (!line || colX == null) return 0;
-    const candidates = [];
-    for (const it of line.items) {
-      const s = (it.str || "").trim();
-      if (!isAmountToken(s)) continue;
-      if (it.x >= colX - 10 && it.x <= colX + range) {
-        candidates.push({ dx: Math.abs(it.x - colX), v: parseNum(s) });
-      }
-    }
-    if (!candidates.length) return 0;
-    candidates.sort((a, b) => a.dx - b.dx);
-    return candidates[0].v;
+  // ---- Excel 2D配列化（各シート）----
+  function sheetToGrid(ws){
+    return XLSX.utils.sheet_to_json(ws, { header: 1, defval: "", raw: true });
   }
 
-  function detectRate(lineText) {
-    const t = lineText || "";
+  function rowText(row){
+    return row.map(v => String(v ?? "").trim()).filter(Boolean).join(" ");
+  }
+
+  function detectRateFromRow(row){
+    const t = rowText(row);
     if (/(^|\s)10\s*%/.test(t)) return 10;
     if (/(^|\s)8\s*%/.test(t)) return 8;
     return null;
   }
 
-  // ★ 修正：税率行は「行内の最後の2つの金額」を 税抜合計・消費税合計 とみなす（列ズレ耐性）
-  function extractTaxTotalsFromRateLine(line) {
-    const nums = line.items
-      .map(it => ({ x: it.x, s: (it.str || "").trim() }))
-      .filter(o => isAmountToken(o.s))
-      .sort((a,b) => a.x - b.x)
-      .map(o => parseNum(o.s));
-
-    if (nums.length >= 2) {
+  // ★税率行：行内の“最後の2つの金額” = 税抜合計/消費税合計 とみなす（列ズレに強い）
+  function extractBaseTaxFromRateRow(row){
+    const nums = [];
+    for (const v of row){
+      if (isAmountLike(v)) nums.push(parseNum(v));
+    }
+    if (nums.length >= 2){
       const base = nums[nums.length - 2];
       const tax  = nums[nums.length - 1];
       return { base, tax, ok: true };
@@ -290,65 +284,248 @@
     return { base: 0, tax: 0, ok: false };
   }
 
-  function guessMonthEndFromText(allText) {
-    const re = /(\d{4})年(\d{1,2})月(\d{1,2})日[\s\S]*?～[\s\S]*?(\d{4})年(\d{1,2})月(\d{1,2})日/;
-    const m = (allText || "").match(re);
-    if (m) {
-      const endY = parseInt(m[4], 10);
-      const endM = parseInt(m[5], 10);
-      return new Date(endY, endM, 0);
+  // 取引先名の推定：同じ行のコード左側 or 直前数行から抽出
+  function inferName(grid, r, codeCol){
+    const sameRow = grid[r] || [];
+    let parts = [];
+    for (let c=0;c<codeCol;c++){
+      const v = sameRow[c];
+      const s = String(v ?? "").trim();
+      if (!s) continue;
+      if (isAggregateText(s)) continue;
+      if (CODE_RE.test(s)) continue;
+      if (isAmountLike(s)) continue;
+      if (/(10\s*%|8\s*%)/.test(s)) continue;
+      if (s.includes("（得意先）")) continue;
+      parts.push(s);
+    }
+    const name1 = parts.join(" ").trim();
+    if (name1 && !isAggregateText(name1)) return name1;
+
+    for (let back=1; back<=7; back++){
+      const rr = r - back;
+      if (rr < 0) break;
+      const row = grid[rr] || [];
+      const t = rowText(row);
+      if (!t) continue;
+      if (isAggregateText(t)) continue;
+      if (t.includes("非課税対象額") || t.includes("外税対象額") || t.includes("当残高")) continue;
+
+      const cand = row
+        .map(v => String(v ?? "").trim())
+        .filter(s => s && !CODE_RE.test(s) && !isAmountLike(s) && !/(10\s*%|8\s*%)/.test(s))
+        .join(" ")
+        .trim();
+      if (cand && !isAggregateText(cand)) return cand;
+    }
+    return "不明な取引先";
+  }
+
+  function normalizeName(s){
+    return String(s ?? "")
+      .replace(/\u3000/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  // ---- マスター（Sheet1）からTKCコード引当 ----
+  function buildMasterMaps(wb){
+    let masterSheetName = null;
+
+    // 期待：シート名が "Sheet1 "（末尾スペースあり）等
+    for (const name of wb.SheetNames){
+      const ws = wb.Sheets[name];
+      const grid = sheetToGrid(ws);
+      const a1 = String((grid[0]||[])[0] ?? "").trim();
+      const b1 = String((grid[0]||[])[1] ?? "").trim();
+      const c1 = String((grid[0]||[])[2] ?? "").trim();
+      if (a1 === "取引先名" && b1 === "取引先コード" && c1 === "TKCコード"){
+        masterSheetName = name;
+        break;
+      }
+    }
+
+    const codeToTkc = new Map();
+    const nameToTkc = new Map();
+
+    if (!masterSheetName){
+      logDbg("Master: 見つかりません（取引先名/取引先コード/TKCコード のヘッダシートなし）");
+      return { codeToTkc, nameToTkc, masterSheet: null };
+    }
+
+    const ws = wb.Sheets[masterSheetName];
+    const grid = sheetToGrid(ws);
+    logDbg(`Master: "${masterSheetName}" rows=${grid.length}`);
+
+    for (let r=1; r<grid.length; r++){
+      const row = grid[r] || [];
+      // 左ブロック A-C： 取引先名 / 取引先コード / TKCコード
+      const nameL = normalizeName(row[0]);
+      const codeL = row[1];
+      const tkcL  = row[2];
+
+      if (nameL && isAmountLike(codeL) && isAmountLike(tkcL)){
+        const c = parseNum(codeL);
+        const t = parseNum(tkcL);
+        if (c > 0 && t > 0){
+          codeToTkc.set(c, String(t));
+          if (!nameToTkc.has(nameL)) nameToTkc.set(nameL, String(t));
+        }
+      }
+
+      // 右ブロック E-F： 取引先名 / TKCコード（取引先コードなし）
+      const nameR = normalizeName(row[4]);
+      const tkcR  = row[5];
+      if (nameR && isAmountLike(tkcR)){
+        const t = parseNum(tkcR);
+        if (t > 0 && !nameToTkc.has(nameR)) nameToTkc.set(nameR, String(t));
+      }
+    }
+
+    logDbg(`Master maps: codeToTkc=${codeToTkc.size}, nameToTkc=${nameToTkc.size}`);
+    return { codeToTkc, nameToTkc, masterSheet: masterSheetName };
+  }
+
+  function inferTkc(codeStr, name){
+    // codeStr: "00003034-001"
+    const head = String(codeStr ?? "").split("-")[0];
+    const num = parseInt(head, 10);
+    if (Number.isFinite(num) && masterMaps.codeToTkc.has(num)){
+      return masterMaps.codeToTkc.get(num);
+    }
+    const n = normalizeName(name);
+    if (n && masterMaps.nameToTkc.has(n)){
+      return masterMaps.nameToTkc.get(n);
+    }
+    return "";
+  }
+
+  // ---- 入金列検出（見出し揺れ対応＋追加文字列）----
+  function findPaymentCol(grid){
+    const extra = normalizeName(payHeaderExtraEl.value);
+    const candidates = [
+      "入金/支払","入金／支払","入金/支払額","入金／支払額",
+      "入金/支払金額","入金／支払金額","入金支払","入金 支払",
+      "入金","支払","入金額","支払額","入金金額","支払金額"
+    ];
+    if (extra) candidates.unshift(extra);
+
+    // ヘッダ行は上から3行くらいに出る前提（この帳票形式）
+    const headerRows = [0,1,2].filter(i => i < grid.length);
+
+    // 1st pass: 「入金」と「支払」の両方を含むセル（最優先）
+    for (const r of headerRows){
+      const row = grid[r] || [];
+      for (let c=0; c<row.length; c++){
+        const s = normalizeName(row[c]);
+        if (!s) continue;
+        if (s.includes("入金") && s.includes("支払")) return c;
+      }
+    }
+
+    // 2nd pass: candidates に一致/包含
+    for (const r of headerRows){
+      const row = grid[r] || [];
+      for (let c=0; c<row.length; c++){
+        const s = normalizeName(row[c]);
+        if (!s) continue;
+        for (const cand of candidates){
+          if (s === cand || s.includes(cand)) return c;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  // 入金額：取引先コード周辺行の payCol セルから拾う（見つからなければ0）
+  function extractPaymentAround(grid, r, payCol){
+    if (payCol == null) return 0;
+
+    // まず直前5行（この帳票は「名前行」に入金が載ることが多い）
+    for (let rr=r; rr>=Math.max(0, r-5); rr--){
+      const row = grid[rr] || [];
+      const v = row[payCol];
+      if (isAmountLike(v)) return parseNum(v);
+    }
+    // 次に直後2行
+    for (let rr=r+1; rr<=Math.min(grid.length-1, r+2); rr++){
+      const row = grid[rr] || [];
+      const v = row[payCol];
+      if (isAmountLike(v)) return parseNum(v);
+    }
+    return 0;
+  }
+
+  function guessMonthEndFromWorkbook(allTexts){
+    const re = /(\d{4})年(\d{1,2})月/;
+    const m = allTexts.match(re);
+    if (m){
+      const y = parseInt(m[1], 10);
+      const mo = parseInt(m[2], 10);
+      return new Date(y, mo, 0);
     }
     const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    return new Date(now.getFullYear(), now.getMonth()+1, 0);
   }
-  function fmtDate(d) {
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    const dd = String(d.getDate()).padStart(2, "0");
+  function fmtDate(d){
+    const y=d.getFullYear();
+    const m=String(d.getMonth()+1).padStart(2,"0");
+    const dd=String(d.getDate()).padStart(2,"0");
     return `${y}-${m}-${dd}`;
   }
 
-  function renderTable() {
+  function renderTable(){
     tbody.innerHTML = "";
+    const showPay = includePaymentEl.checked;
+
     extractedData.forEach((row, idx) => {
       const tr = document.createElement("tr");
+      const tkcWarn = !row.tkc || row.tkc === "0";
       tr.innerHTML = `
         <td style="text-align:left;">${csvEscape(row.name)}</td>
         <td>${csvEscape(row.code)}</td>
+        <td><input class="code ${tkcWarn ? "warn" : ""}" type="text" id="tkc_${idx}" value="${csvEscape(row.tkc || "")}" placeholder="未割当"></td>
         <td><input class="money" type="text" inputmode="numeric" id="s10_${idx}" value="${toComma(row.sales10 || 0)}"></td>
         <td><input class="money" type="text" inputmode="numeric" id="s8_${idx}" value="${toComma(row.sales8 || 0)}"></td>
-        <td><input class="money" type="text" inputmode="numeric" id="pay_${idx}" value="${toComma(row.payment || 0)}"></td>
+        <td class="tdPay ${showPay ? "" : "hidden"}"><input class="money" type="text" inputmode="numeric" id="pay_${idx}" value="${toComma(row.payment || 0)}"></td>
       `;
       tbody.appendChild(tr);
 
-      ["s10_", "s8_", "pay_"].forEach(prefix => {
+      // money inputs
+      ["s10_","s8_"].forEach(prefix => {
         const el = document.getElementById(`${prefix}${idx}`);
-
-        el.addEventListener("focus", () => {
-          el.value = stripComma(el.value);
-          el.select?.();
-        });
-
-        el.addEventListener("blur", () => {
-          el.value = toComma(parseIntSafe(el.value));
-          recomputeSums();
-        });
-
-        el.addEventListener("input", () => {
-          el.value = el.value.replace(/[^\d,\-()]/g, "");
-          recomputeSums();
-        });
+        el.addEventListener("focus", () => { el.value = stripComma(el.value); el.select?.(); });
+        el.addEventListener("blur", () => { el.value = toComma(parseIntSafe(el.value)); recomputeSums(); });
+        el.addEventListener("input", () => { el.value = el.value.replace(/[^\d,\-()]/g, ""); recomputeSums(); });
       });
+
+      // tkc input
+      const tkcEl = document.getElementById(`tkc_${idx}`);
+      tkcEl.addEventListener("input", () => {
+        tkcEl.value = tkcEl.value.replace(/[^\d]/g, "");
+        tkcEl.classList.toggle("warn", !tkcEl.value);
+      });
+
+      // payment input (optional)
+      if (showPay){
+        const payEl = document.getElementById(`pay_${idx}`);
+        payEl.addEventListener("focus", () => { payEl.value = stripComma(payEl.value); payEl.select?.(); });
+        payEl.addEventListener("blur", () => { payEl.value = toComma(parseIntSafe(payEl.value)); recomputeSums(); });
+        payEl.addEventListener("input", () => { payEl.value = payEl.value.replace(/[^\d,\-()]/g, ""); recomputeSums(); });
+      }
     });
 
+    countPill.textContent = `${extractedData.length}件`;
+    applyPaymentVisibility();
     recomputeSums();
   }
 
-  pdfInput.addEventListener("change", async (e) => {
+  xlsxInput.addEventListener("change", async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    statusEl.textContent = "PDFを解析中...（ページ数が多いと少し時間がかかります）";
+    statusEl.textContent = "Excelを解析中...（ローカルで処理します）";
     resultsArea.style.display = "none";
     extractedData = [];
     lastRawCustomers = [];
@@ -357,151 +534,183 @@
 
     try {
       const buf = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+      lastArrayBuffer = buf;
+      lastFileName = file.name;
 
-      const customers = new Map();
-      let firstPageAllText = "";
+      await parseWorkbook(buf, file.name);
 
-      for (let p = 1; p <= pdf.numPages; p++) {
-        const page = await pdf.getPage(p);
-        const lines = await getPageLines(page);
-
-        if (p === 1) firstPageAllText = lines.map(l => l.text).join("\n");
-
-        const payX  = findAnchorX(lines, "入金/支払");
-        logDbg(`--- page ${p}/${pdf.numPages} --- payX=${payX?.toFixed?.(1) ?? "null"}`);
-
-        let inFootList = false;
-
-        for (let i = 0; i < lines.length; i++) {
-          const ln = lines[i];
-
-          if (ln.text.includes("（得意先）")) inFootList = true;
-          if (inFootList && ln.text.includes("取引先：[")) inFootList = false;
-
-          const codeItem = ln.items.find(it => CODE_RE.test(it.str) && it.x < 160);
-          if (!codeItem) continue;
-          if (inFootList) continue;
-          if (ln.text.includes("取引先：[")) continue;
-
-          const code = codeItem.str;
-
-          // 取引先名の推測（コード行の直前付近）
-          let nameLine = null;
-          let summaryLine = null;
-
-          for (let back = 1; back <= 7; back++) {
-            const k = i - back;
-            if (k < 0) break;
-            const cand = lines[k];
-
-            if (isAggregateLineText(cand.text)) continue; // ★重要：集計行は参照しない
-            if (cand.text.includes("非課税対象額") || cand.text.includes("外税対象額")) continue;
-
-            const name = extractNameFromLine(cand);
-            if (name) { nameLine = cand; break; }
-            if (!summaryLine && /\d/.test(cand.text)) summaryLine = cand;
-          }
-
-          const name = extractNameFromLine(nameLine) || "不明な取引先";
-          const payment = extractColumnNumber(summaryLine || nameLine, payX);
-
-          if (!customers.has(code)) customers.set(code, { code, name, sales10: 0, sales8: 0, payment: 0 });
-          const rec = customers.get(code);
-          if (rec.name === "不明な取引先" && name !== "不明な取引先") rec.name = name;
-          rec.payment += payment;
-
-          // ★重要：この取引先の税率行を拾う（集計行に当たったら打ち切り）
-          for (let j = i + 1; j < lines.length; j++) {
-            const ln2 = lines[j];
-
-            if (ln2.text.includes("（得意先）")) break;
-
-            // 集計ブロックに入ったら終了（＝業務店掛計＝ 等）
-            if (isAggregateLineText(ln2.text)) {
-              logDbg(`STOP（集計検出）: code=${code} name=${rec.name} line="${ln2.text}"`);
-              break;
-            }
-
-            // 次の取引先コードが来たら終了
-            const nextCode = ln2.items.find(it => CODE_RE.test(it.str) && it.x < 160);
-            if (nextCode) break;
-
-            const rate = detectRate(ln2.text);
-            if (!rate) continue;
-
-            const totals = extractTaxTotalsFromRateLine(ln2);
-            if (!totals.ok) continue;
-
-            const gross = totals.base + totals.tax;
-            if (rate === 10) rec.sales10 += gross;
-            if (rate === 8)  rec.sales8  += gross;
-          }
-        }
-      }
-
-      const lastDay = guessMonthEndFromText(firstPageAllText);
-      dateInput.value = fmtDate(lastDay);
-
-      extractedData = Array.from(customers.values()).sort((a, b) => a.code.localeCompare(b.code));
-      lastRawCustomers = extractedData;
-
-      logDbg(`\n抽出完了: 取引先=${extractedData.length}件`);
-      if (!extractedData.length) {
-        statusEl.textContent =
-          "抽出件数が0です。PDFが画像化（スキャン）されているか、文字情報の配置が異なる可能性があります。デバッグログをONにして確認してください。";
-        resultsArea.style.display = "block";
-        renderTable();
-        return;
-      }
-
-      statusEl.textContent = "";
-      resultsArea.style.display = "block";
-      renderTable();
-
-    } catch (err) {
+    } catch (err){
       console.error(err);
-      statusEl.textContent = "エラー：PDF解析に失敗しました（テキスト抽出不可の形式の可能性があります）。";
+      statusEl.textContent = "エラー：Excel解析に失敗しました（ファイル破損/形式差異の可能性）。";
     }
   });
 
-  function downloadCSV() {
+  async function parseWorkbook(arrayBuffer, fileName){
+    const wb = XLSX.read(arrayBuffer, { type: "array", cellDates: false });
+    logDbg(`File: ${fileName}`);
+    logDbg(`Sheets: ${wb.SheetNames.join(", ")}`);
+
+    // マスター構築
+    masterMaps = buildMasterMaps(wb);
+
+    const customers = new Map();
+    let allTexts = "";
+
+    // 帳票シート：Masterシートは除外
+    const reportSheets = wb.SheetNames.filter(n => n !== masterMaps.masterSheet);
+
+    for (const sheetName of reportSheets){
+      const ws = wb.Sheets[sheetName];
+      const grid = sheetToGrid(ws);
+      allTexts += "\n" + grid.map(r => rowText(r)).join("\n");
+
+      const payCol = findPaymentCol(grid);
+      logDbg(`--- sheet "${sheetName}" rows=${grid.length} payCol=${payCol ?? "null"} ---`);
+
+      let inFootList = false;
+
+      for (let r=0; r<grid.length; r++){
+        const row = grid[r] || [];
+        const t = rowText(row);
+
+        if (t.includes("（得意先）")) inFootList = true;
+        if (inFootList && t.includes("取引先：[")) inFootList = false;
+
+        if (isAggregateText(t)) continue;
+
+        // 取引先コード検出
+        let code = null;
+        let codeCol = -1;
+        for (let c=0; c<row.length; c++){
+          const s = String(row[c] ?? "").trim();
+          if (CODE_RE.test(s)){
+            code = s;
+            codeCol = c;
+            break;
+          }
+        }
+        if (!code) continue;
+        if (inFootList) continue;
+        if (t.includes("取引先：[")) continue;
+
+        const name = inferName(grid, r, codeCol);
+        const tkc = inferTkc(code, name);
+
+        // 入金（見つからなければ0）
+        const payment = extractPaymentAround(grid, r, payCol);
+
+        if (!customers.has(code)) customers.set(code, { code, name, tkc, sales10: 0, sales8: 0, payment: 0 });
+        const rec = customers.get(code);
+
+        // name/tkc の確定（不明→判明、空→判明）
+        if (rec.name === "不明な取引先" && name !== "不明な取引先") rec.name = name;
+        if (!rec.tkc && tkc) rec.tkc = tkc;
+
+        // payment は二重加算を避け、より大きい絶対値を採用（0→値）
+        if (payment !== 0 && Math.abs(payment) > Math.abs(rec.payment)) rec.payment = payment;
+
+        // 税率行（10%/8%）を次の取引先コード or 集計ブロックまで拾う
+        for (let rr=r; rr<Math.min(grid.length, r+80); rr++){
+          const row2 = grid[rr] || [];
+          const t2 = rowText(row2);
+          if (!t2) continue;
+
+          if (isAggregateText(t2)) break;
+
+          // 次の取引先コードが来たら打ち切り（ただし同一行は除外）
+          if (rr > r){
+            let hasNextCode = false;
+            for (let c=0;c<row2.length;c++){
+              const s = String(row2[c] ?? "").trim();
+              if (CODE_RE.test(s)) { hasNextCode = true; break; }
+            }
+            if (hasNextCode) break;
+          }
+
+          const rate = detectRateFromRow(row2);
+          if (!rate) continue;
+
+          const tot = extractBaseTaxFromRateRow(row2);
+          if (!tot.ok) continue;
+
+          const gross = tot.base + tot.tax;
+          if (rate === 10) rec.sales10 += gross;
+          if (rate === 8)  rec.sales8  += gross;
+        }
+      }
+    }
+
+    // 仕訳日付の推定（YYYY年M月を拾って月末）
+    dateInput.value = fmtDate(guessMonthEndFromWorkbook(allTexts));
+
+    extractedData = Array.from(customers.values())
+      .filter(r => !isAggregateText(r.name))
+      .sort((a,b) => a.code.localeCompare(b.code));
+
+    lastRawCustomers = extractedData;
+
+    if (!extractedData.length){
+      statusEl.textContent = "抽出件数が0です。Excel形式（コード表記/シート構成）が想定と異なる可能性があります。デバッグログをONにして確認してください。";
+      resultsArea.style.display = "block";
+      renderTable();
+      return;
+    }
+
+    statusEl.textContent = "";
+    resultsArea.style.display = "block";
+    renderTable();
+  }
+
+  function getCsvCustomerCode(idx, row){
+    const tkc = document.getElementById(`tkc_${idx}`)?.value?.trim() ?? "";
+    if (useTkcForCsvEl.checked && tkc) return tkc;
+    // TKCを使わない or 空の場合は元コード
+    return row.code;
+  }
+
+  function downloadCSV(){
     const dateStr = dateInput.value;
     if (!dateStr) { alert("日付を指定してください"); return; }
 
+    // 会計ソフト用：列仕様は固定（追加列なし）
     const header = [
       "種類","課税区分","税率","P/L部門","借方コード","借方科目","補助コード","B/S部門管理",
       "貸方コード","貸方科目","補助コード","B/S部門管理","取引先コード","取引先名","摘要","税込金額","日付"
     ];
-
     const rows = [header.map(csvEscape).join(",")];
 
     extractedData.forEach((row, idx) => {
       const s10 = parseIntSafe(document.getElementById(`s10_${idx}`).value);
       const s8  = parseIntSafe(document.getElementById(`s8_${idx}`).value);
-      const pay = parseIntSafe(document.getElementById(`pay_${idx}`).value);
+      const pay = includePaymentEl.checked ? parseIntSafe(document.getElementById(`pay_${idx}`)?.value) : 0;
 
-      if (s10 > 0) {
+      const custCode = getCsvCustomerCode(idx, row);
+      const custName = row.name;
+
+      if (s10 > 0){
         rows.push([
           "売上","1","10","","1122","売掛金","","","4111","売上高","","",
-          row.code,row.name,"売上計上(10%)", String(s10), dateStr
+          custCode,custName,"売上計上(10%)", String(s10), dateStr
         ].map(csvEscape).join(","));
       }
-      if (s8 > 0) {
+      if (s8 > 0){
         rows.push([
           "売上","1","8","","1122","売掛金","","","4111","売上高","","",
-          row.code,row.name,"売上計上(8%)", String(s8), dateStr
+          custCode,custName,"売上計上(8%)", String(s8), dateStr
         ].map(csvEscape).join(","));
       }
-      if (pay > 0) {
+      if (includePaymentEl.checked && pay !== 0){
         rows.push([
           "入金","0","0","","1113","普通預金","","","1122","売掛金","","",
-          row.code,row.name,"入金", String(pay), dateStr
+          custCode,custName,"入金", String(pay), dateStr
         ].map(csvEscape).join(","));
       }
     });
 
-    if (rows.length === 1) { alert("出力するデータがありません（全て0のため）。"); return; }
+    if (rows.length === 1){
+      alert("出力するデータがありません（全て0のため）。");
+      return;
+    }
 
     const csvString = "\uFEFF" + rows.join("\r\n");
     const blob = new Blob([csvString], { type: "text/csv;charset=utf-8;" });
@@ -511,7 +720,36 @@
     link.click();
   }
 
-  function downloadDebugJSON() {
+  function downloadAuditCSV(){
+    const dateStr = dateInput.value || "日付未設定";
+    const header = ["元コード","TKCコード","取引先名","10%税込","8%税込","入金額"];
+    const rows = [header.map(csvEscape).join(",")];
+
+    extractedData.forEach((row, idx) => {
+      const tkc = document.getElementById(`tkc_${idx}`)?.value?.trim() ?? "";
+      const s10 = parseIntSafe(document.getElementById(`s10_${idx}`).value);
+      const s8  = parseIntSafe(document.getElementById(`s8_${idx}`).value);
+      const pay = includePaymentEl.checked ? parseIntSafe(document.getElementById(`pay_${idx}`)?.value) : 0;
+
+      rows.push([
+        row.code,
+        tkc,
+        row.name,
+        String(s10),
+        String(s8),
+        String(pay)
+      ].map(csvEscape).join(","));
+    });
+
+    const csvString = "\uFEFF" + rows.join("\r\n");
+    const blob = new Blob([csvString], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `確認用_売上一覧_${dateStr}.csv`;
+    link.click();
+  }
+
+  function downloadDebugJSON(){
     const blob = new Blob([JSON.stringify(lastRawCustomers, null, 2)], { type: "application/json;charset=utf-8;" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
